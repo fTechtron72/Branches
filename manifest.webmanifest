@@ -1,0 +1,9 @@
+{
+  "name": "Branches — Guard App (MVP)",
+  "short_name": "Branches",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#0a0a0a",
+  "description": "Shifts, incidents, and daily reports for Branches Security."
+}
