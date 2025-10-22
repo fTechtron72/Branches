@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Branches — Guard App (MVP)</title>
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="manifest" href="./manifest.webmanifest">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @supports (padding: env(safe-area-inset-bottom)) {
+      .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+      .safe-top { padding-top: env(safe-area-inset-top); }
+    }
+  </style>
+</head>
+<body class="bg-zinc-50 text-zinc-900">
+  <div id="root"></div>
+
+  <script type="module">
+    import React, {useEffect, useMemo, useState} from "https://esm.sh/react@18";
+    import { createRoot } from "https://esm.sh/react-dom@18/client";
+
+    const STORAGE_KEY = "branches_app_data_v1";
+    const nowISO = () => new Date().toISOString();
+    const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+    const uid = () => Math.random().toString(36).slice(2, 9);
+
+    const DEFAULT_DATA = {
+      company: "Branches Security",
+      officerName: "",
+      badgeId: "",
+      phone: "",
+      supervisorPhone: "",
+      sites: ["Condado Lagoon Park","La Placita (Santurce)","Isla Verde Boardwalk"],
+      shifts: [],
+      incidents: []
+    };
+
+    function useLocalData() {
+      const [data, setData] = useState(() => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          return raw ? ({...DEFAULT_DATA, ...JSON.parse(raw)}) : DEFAULT_DATA;
+        } catch (e) { return DEFAULT_DATA; }
+      });
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      }, [data]);
+      return [data, setData];
+    }
+
+    function useGeo() {
+      const [loc, setLoc] = useState(null);
+      const [err, setErr] = useState(null);
+      const [loading, setLoading] = useState(false);
+
+      const get = async () => {
+        if (!("geolocation" in navigator)) { setErr("Geolocation not supported."); return null; }
+        setLoading(true); setErr(null);
+        return new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => { const {latitude:lat, longitude:lng} = pos.coords; const p = {lat, lng}; setLoc(p); setLoading(false); resolve(p); },
+            (e) => { setErr(e.message || "Location error"); setLoading(false); resolve(null); },
+            { enableHighAccuracy: true, timeout: 10000 }
+          );
+        });
+      };
+      return {loc, err, loading, get};
+    }
+
+    const Pill = ({children}) => (
+      <span class="px-2 py-1 text-xs rounded-full bg-zinc-100 border border-zinc-200">{children}</span>
+    );
+
+    const Section = ({title, right, children}) => (
+      <div class="bg-white rounded-2xl shadow-sm border border-zinc-200 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-zinc-800">{title}</h3>
+          {right}
+        </div>
+        {children}
+      </div>
+    );
+
+    const TopBar = ({title}) => (
+      <div class="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-zinc-200 safe-top">
+        <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-xl bg-black text-white flex items-center justify-center font-bold">B</div>
+            <div>
+              <div class="text-xs text-zinc-500 leading-none">Branches</div>
+              <div class="text-sm font-semibold leading-none">{title}</div>
+            </div>
+          </div>
+          <div class="text-[10px] text-zinc-400">MVP</div>
+        </div>
+      </div>
+    );
+
+    function TabBar({tab, setTab}){
+      const tabs = ["Dashboard","Shift","Incidents","Sites","Reports","Settings"];
+      return (
+        <div class="sticky bottom-0 z-20 bg-white/90 backdrop-blur border-t border-zinc-200 safe-bottom">
+          <div class="max-w-xl mx-auto px-2 py-2 grid grid-cols-6 gap-2">
+            {tabs.map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                class={`${tab===t ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-200"} text-[11px] py-2 rounded-xl border`}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    const Dash = ({data}) => {
+      const openShift = data.shifts.find(s => !s.endedAt);
+      return (
+        <div class="space-y-4">
+          <Section title="Officer">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">{data.officerName || "—"}</div>
+                <div class="text-xs text-zinc-500">Badge: {data.badgeId || "—"}</div>
+              </div>
+              <Pill>{data.company}</Pill>
+            </div>
+          </Section>
+
+          <Section title="Status">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium">{openShift ? "On Duty" : "Off Duty"}</div>
+                {openShift && (<div class="text-xs text-zinc-500">Started: {fmtTime(openShift.startedAt)}</div>)}
+              </div>
+              <Pill>{data.sites.length} Sites</Pill>
+            </div>
+          </Section>
+
+          <Section title="Quick Actions">
+            <div class="grid grid-cols-2 gap-2">
+              <a href="#shift" class="rounded-xl border border-zinc-200 p-3 text-sm text-center">Shift</a>
+              <a href="#incident" class="rounded-xl border border-zinc-200 p-3 text-sm text-center">New Incident</a>
+            </div>
+          </Section>
+        </div>
+      );
+    };
+
+    function ShiftView({data, setData}){
+      const {get, loading, err} = useGeo();
+      const openShift = data.shifts.find(s => !s.endedAt);
+
+      const startShift = async () => {
+        if (openShift) return;
+        const loc = await get();
+        const s = { id: uid(), startedAt: nowISO(), startLoc: loc };
+        setData(d => ({...d, shifts: [s, ...d.shifts]}));
+      };
+      const endShift = async () => {
+        if (!openShift) return;
+        const loc = await get();
+        setData(d => ({...d, shifts: d.shifts.map(s => s.id===openShift.id ? ({...s, endedAt: nowISO(), endLoc: loc}) : s)}));
+      };
+      const callSupervisor = () => {
+        if (!data.supervisorPhone) return alert("Add supervisor phone in Settings.");
+        window.location.href = `tel:${data.supervisorPhone}`;
+      };
+
+      return (
+        <div class="space-y-4">
+          <Section title="Duty Status" right={<Pill>{openShift ? "On Duty" : "Off Duty"}</Pill>}>
+            <div class="flex items-center gap-2">
+              <button id="shift" onClick={startShift} disabled={!!openShift || loading} class="flex-1 rounded-xl border border-zinc-200 p-3 text-sm disabled:opacity-50">Start Shift</button>
+              <button onClick={endShift} disabled={!openShift || loading} class="flex-1 rounded-xl border border-zinc-200 p-3 text-sm disabled:opacity-50">End Shift</button>
+            </div>
+            {err && <div class="text-xs text-rose-600 mt-2">{err}</div>}
+            {openShift && <div class="mt-3 text-xs text-zinc-600">In since {fmtTime(openShift.startedAt)}</div>}
+          </Section>
+
+          <Section title="Panic Button">
+            <div class="flex items-center gap-2">
+              <button onClick={callSupervisor} class="flex-1 rounded-xl p-4 text-sm font-semibold border border-zinc-200 bg-zinc-900 text-white">Call Supervisor</button>
+              <a class="flex-1 rounded-xl p-4 text-sm font-semibold border border-zinc-200 text-center" href="sms:911">SMS 911</a>
+            </div>
+          </Section>
+
+          <Section title="Last 3 Shifts">
+            <div class="space-y-2">
+              {data.shifts.slice(0,3).map(s => (
+                <div key={s.id} class="rounded-xl border border-zinc-200 p-3 text-sm">
+                  <div class="font-medium">{fmtTime(s.startedAt)} — {s.endedAt ? fmtTime(s.endedAt) : "(open)"}</div>
+                  <div class="text-xs text-zinc-500">Start: {s.startLoc ? `${s.startLoc.lat.toFixed(5)}, ${s.startLoc.lng.toFixed(5)}` : "—"}</div>
+                </div>
+              ))}
+              {data.shifts.length===0 && <div class="text-sm text-zinc-500">No shifts yet.</div>}
+            </div>
+          </Section>
+        </div>
+      );
+    }
+
+    function IncidentForm({data, setData}){
+      const {get, loading} = useGeo();
+      const [site, setSite] = useState(data.sites[0] || "");
+      const [type, setType] = useState("Suspicious");
+      const [severity, setSeverity] = useState("Medium");
+      const [notes, setNotes] = useState("");
+      const [photos, setPhotos] = useState([]);
+
+      const onAddPhoto = async (file) => {
+        const reader = new FileReader();
+        reader.onload = () => setPhotos(p => [...p, String(reader.result)]);
+        reader.readAsDataURL(file);
+      };
+
+      const submit = async () => {
+        const loc = await get();
+        const inc = { id: uid(), createdAt: nowISO(), site, type, severity, notes, photos, loc };
+        setData(d => ({...d, incidents: [inc, ...d.incidents]}));
+        setNotes(""); setPhotos([]);
+        alert("Incident saved to device.");
+      };
+
+      return (
+        <div class="space-y-4">
+          <Section title="New Incident" right={<Pill>{loading ? "Locating…" : "GPS Ready"}</Pill>}>
+            <div class="grid gap-3" id="incident">
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Site</div>
+                <select value={site} onChange={(e)=>setSite(e.target.value)} class="w-full border border-zinc-200 rounded-xl p-2 text-sm">
+                  {data.sites.map(s => (<option key={s} value={s}>{s}</option>))}
+                </select>
+              </label>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="text-sm">
+                  <div class="text-xs text-zinc-600 mb-1">Type</div>
+                  <select value={type} onChange={(e)=>setType(e.target.value)} class="w-full border border-zinc-200 rounded-xl p-2 text-sm">
+                    {["Suspicious","Trespass","Vandalism","Medical","Theft","Maintenance","Noise"].map(t => (<option key={t} value={t}>{t}</option>))}
+                  </select>
+                </label>
+                <label class="text-sm">
+                  <div class="text-xs text-zinc-600 mb-1">Severity</div>
+                  <select value={severity} onChange={(e)=>setSeverity(e.target.value)} class="w-full border border-zinc-200 rounded-xl p-2 text-sm">
+                    {["Low","Medium","High"].map(s => (<option key={s} value={s}>{s}</option>))}
+                  </select>
+                </label>
+              </div>
+
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Notes</div>
+                <textarea rows="4" value={notes} onChange={(e)=>setNotes(e.target.value)} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" placeholder="What happened?"></textarea>
+              </label>
+
+              <div class="text-xs text-zinc-600">Photos</div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <label class="w-28 h-20 border border-dashed border-zinc-300 rounded-xl flex items-center justify-center text-xs cursor-pointer">
+                  + Add
+                  <input type="file" accept="image/*" capture="environment" class="hidden"
+                         onchange="(function(e){ const f=e.target.files?.[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ window.__addPhoto && window.__addPhoto(String(r.result)); }; r.readAsDataURL(f); e.currentTarget.value=''; })(event)">
+                </label>
+                <div id="photo-thumbs" class="flex gap-2"></div>
+              </div>
+
+              <button onclick="window.__saveIncident && window.__saveIncident()" class="rounded-xl border border-zinc-200 bg-zinc-900 text-white p-3 text-sm">Save Incident</button>
+            </div>
+          </Section>
+
+          <Section title="Recent Incidents">
+            <div id="recent-incidents" class="space-y-2"></div>
+          </Section>
+        </div>
+      );
+    }
+
+    function SitesView({data, setData}){
+      const [newSite, setNewSite] = useState("");
+      const addSite = () => {
+        const s = newSite.trim(); if(!s) return;
+        if (data.sites.includes(s)) return alert("That site already exists.");
+        setData(d => ({...d, sites: [s, ...d.sites]})); setNewSite("");
+      };
+      const removeSite = (name) => setData(d => ({...d, sites: d.sites.filter(x => x !== name)}));
+      return (
+        <div class="space-y-4">
+          <Section title="Sites (Posts / Clients)">
+            <div class="flex gap-2">
+              <input value={newSite} onChange={(e)=>setNewSite(e.target.value)} placeholder="Add a site name" class="flex-1 border border-zinc-200 rounded-xl p-2 text-sm" />
+              <button onClick={addSite} class="rounded-xl border border-zinc-200 px-3 text-sm">Add</button>
+            </div>
+          </Section>
+          <Section title="All Sites">
+            <div class="space-y-2">
+              {data.sites.map(s => (
+                <div key={s} class="flex items-center justify-between rounded-xl border border-zinc-200 p-3 text-sm">
+                  <div>{s}</div>
+                  <button onClick={()=>removeSite(s)} class="text-xs text-rose-600">Remove</button>
+                </div>
+              ))}
+              {data.sites.length===0 && <div class="text-sm text-zinc-500">No sites yet.</div>}
+            </div>
+          </Section>
+        </div>
+      );
+    }
+
+    function ReportsView({data}){
+      const todayStr = new Date().toDateString();
+      const todayShifts = data.shifts.filter(s => new Date(s.startedAt).toDateString() === todayStr);
+      const todayIncidents = data.incidents.filter(i => new Date(i.createdAt).toDateString() === todayStr);
+
+      const text = useMemo(() => {
+        const lines = [];
+        lines.push(`# ${data.company} — Daily Activity Report`);
+        lines.push(`Officer: ${data.officerName || "—"}  |  Badge: ${data.badgeId || "—"}`);
+        lines.push(`Date: ${new Date().toLocaleDateString()}\n`);
+        lines.push("## Shifts");
+        if (todayShifts.length===0) lines.push("- No shifts today.");
+        else todayShifts.forEach(s => lines.push(`- ${fmtTime(s.startedAt)} — ${s.endedAt ? fmtTime(s.endedAt) : "(open)"}`));
+        lines.push("\n## Incidents");
+        if (todayIncidents.length===0) lines.push("- No incidents today.");
+        else todayIncidents.forEach(i => {
+          const loc = i.loc ? ` @ ${i.loc.lat.toFixed(5)},${i.loc.lng.toFixed(5)}` : "";
+          lines.push(`- ${fmtTime(i.createdAt)} · ${i.type} · ${i.site} · Severity ${i.severity}${loc}`);
+          if (i.notes) lines.push(`  Notes: ${i.notes}`);
+        });
+        return lines.join("\n");
+      }, [data, todayShifts, todayIncidents]);
+
+      const download = () => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url;
+        a.download = `branches-export-${new Date().toISOString().slice(0,10)}.json`; a.click();
+        URL.revokeObjectURL(url);
+      };
+      const share = async () => {
+        try {
+          if (navigator.share) await navigator.share({title: "Daily Activity Report", text});
+          else { await navigator.clipboard.writeText(text); alert("Report copied to clipboard."); }
+        } catch (e){ console.log(e); }
+      };
+
+      return (
+        <div class="space-y-4">
+          <Section title="Daily Activity Report" right={<Pill>{new Date().toLocaleDateString()}</Pill>}>
+            <pre class="text-xs whitespace-pre-wrap leading-relaxed">{text}</pre>
+            <div class="flex items-center gap-2 mt-3">
+              <button onClick={share} class="flex-1 rounded-xl border border-zinc-200 p-3 text-sm">Share / Copy</button>
+              <button onClick={download} class="flex-1 rounded-xl border border-zinc-200 p-3 text-sm">Export JSON</button>
+            </div>
+          </Section>
+        </div>
+      );
+    }
+
+    function SettingsView({data, setData, onReset}){
+      return (
+        <div class="space-y-4">
+          <Section title="Company">
+            <input value={data.company} onChange={(e)=>setData(d=>({...d, company:e.target.value}))} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" />
+          </Section>
+          <Section title="Officer">
+            <div class="grid grid-cols-2 gap-3">
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Name</div>
+                <input value={data.officerName} onChange={(e)=>setData(d=>({...d, officerName:e.target.value}))} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" />
+              </label>
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Badge</div>
+                <input value={data.badgeId} onChange={(e)=>setData(d=>({...d, badgeId:e.target.value}))} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" />
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Your Phone</div>
+                <input value={data.phone||""} onChange={(e)=>setData(d=>({...d, phone:e.target.value}))} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" />
+              </label>
+              <label class="text-sm">
+                <div class="text-xs text-zinc-600 mb-1">Supervisor Phone</div>
+                <input value={data.supervisorPhone||""} onChange={(e)=>setData(d=>({...d, supervisorPhone:e.target.value}))} class="w-full border border-zinc-200 rounded-xl p-2 text-sm" />
+              </label>
+            </div>
+          </Section>
+          <Section title="Danger Zone">
+            <button onClick={onReset} class="rounded-xl border border-zinc-200 p-3 text-sm text-rose-600">Reset all data</button>
+          </Section>
+        </div>
+      );
+    }
+
+    function App(){
+      const [data, setData] = useLocalData();
+      const [tab, setTab] = useState("Dashboard");
+      useEffect(() => {
+        const h = window.location.hash.replace("#","");
+        if (h==="shift") setTab("Shift");
+        if (h==="incident") setTab("Incidents");
+      }, []);
+
+      const reset = () => {
+        if (confirm("Clear all local data?")) { localStorage.removeItem(STORAGE_KEY); location.reload(); }
+      };
+
+      // Simple bridge for the file input thumbnails:
+      window.__addPhoto = (dataUrl) => {
+        const wrap = document.getElementById("photo-thumbs");
+        if (wrap) { const img = new Image(); img.src = dataUrl; img.className = "w-16 h-12 object-cover rounded border border-zinc-200"; wrap.appendChild(img); }
+      };
+      window.__saveIncident = async () => {
+        alert("Use the black 'Save Incident' button in the form (React handles it).");
+      };
+
+      return (
+        <div class="min-h-screen">
+          <TopBar title={tab} />
+          <main class="max-w-xl mx-auto px-4 py-4 pb-24">
+            {tab==="Dashboard" && <Dash data={data} />}
+            {tab==="Shift" && <ShiftView data={data} setData={setData} />}
+            {tab==="Incidents" && <IncidentForm data={data} setData={setData} />}
+            {tab==="Sites" && <SitesView data={data} setData={setData} />}
+            {tab==="Reports" && <ReportsView data={data} />}
+            {tab==="Settings" && <SettingsView data={data} setData={setData} onReset={reset} />}
+          </main>
+          <TabBar tab={tab} setTab={setTab} />
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById("root")).render(React.createElement(App));
+  </script>
+</body>
+</html>
